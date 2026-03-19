@@ -1,3 +1,4 @@
 .env
 global-bundle.pem
 .streamlit/
+__pycache__/

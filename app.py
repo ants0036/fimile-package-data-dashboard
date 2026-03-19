@@ -4,7 +4,9 @@ from matplotlib import pyplot
 import concurrent.futures
 
 from db import fetch_tracking_numbers
-from api import find_package_details
+from response_parsing import find_delivery_zone
+from api import find_package_details, aggregate_weights, find_payable_weight
+from plot import plot_weight_chart, plot_area_chart
 
 # start and end date picker
 start_date = st.date_input("pick start date")
@@ -17,17 +19,6 @@ if st.button("fetch from db"):
    st.session_state.tracking_numbers = fetch_tracking_numbers(start_date, end_date)
 if "tracking_numbers" in st.session_state:
     st.write(st.session_state.tracking_numbers)
-
-# given an api response, find the payable weight of the item 
-def find_payable_weight(response):
-  response_data = response.json() 
-  logs = response_data.get("listItemReadableStatusLogs")
-  if logs is None:
-    return 0
-  dims = logs[0]["item"]["dimensions"]["dims"]
-  volume = dims[3]["v"]
-  weight = dims[2]["v"]
-  return max((int(volume)/250), int(weight))
 
 # fake tracking data for testing
 test_tracking_data = [
@@ -48,50 +39,12 @@ def process_package(package, area_zip_df):
   zipcode = find_delivery_zone(response, area_zip_df)
   return [payable_weight, zipcode]
 
-def aggregate_weights(weights_df):
-  # sort each weight into a category, then aggregate the categories 
-  weights_df["range"] = pd.cut(
-    weights_df["weights"],
-    bins=[0, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150],
-    labels=["0-30", "30-40", "40-50", "50-60", "60-70", "70-80", "80-90", "90-100", "100-110", "110-120", "120-130", "130-140", "140-150"]
-  )
-  counts = weights_df["range"].value_counts()
-  counts = counts.sort_index()
-  return counts
-
-def plot_weight_chart(counts):
-  fig, ax = pyplot.subplots()
-  counts.plot.pie(ax=ax, 
-                  autopct=lambda pct: f'{pct:.1f}%' if pct > 2 else '', )
-  ax.set_title("Weights")
-  st.pyplot(fig)
-
-def plot_area_chart(areas):
-  fig, ax = pyplot.subplots()
-  areas.plot.pie(ax=ax, 
-                  autopct=lambda pct: f"{int(round(pct * areas.sum() / 100))} ({pct:.1f}%)" if pct > 2 else "")
-  ax.set_title("Areas")
-  st.pyplot(fig)
-
 @st.cache_data
 def load_area_zips():
   return pd.read_csv("data/zip-to-area.csv", dtype={"zipcode": str})
 
-def find_delivery_zone(response, area_zip_df):
-  response_data = response.json() 
-  logs = response_data.get("listItemReadableStatusLogs")
-  if logs is None:
-    return "None"
-  package_zip = logs[len(logs)-1]["item"]["addressComponents"]["zipcode"]
-  area = area_zip_df.loc[area_zip_df["zipcode"] == str(package_zip), ["area"]]
-  if area.empty:
-    return "None"
-  else: 
-    return area.iloc[0]["area"]
-
 def run_weight_area_calculations(tracking_numbers):
   weights = []
-  processed_num = 0
   counter_placeholder = st.empty()
 
   delivery_areas = []
