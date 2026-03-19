@@ -5,6 +5,8 @@ import os
 import requests 
 from datetime import datetime, time
 import pandas as pd
+from matplotlib import pyplot
+import concurrent.futures
 
 # start and end date picker
 start_date = st.date_input("pick start date")
@@ -59,12 +61,12 @@ if "tracking_numbers" in st.session_state:
 # idk if i should cache this since it's unlikely this will be repeated again but it's worth a shot?
 @st.cache_data
 def find_package_details (tracking_number):
+  load_dotenv()
   API_URL_TEMPLATE = "https://isp.beans.ai/enterprise/v1/lists/status_logs?tracking_id={tracking_id}&readable=true&include_item=true"
   url = API_URL_TEMPLATE.format(tracking_id=tracking_number)
   api_key = os.getenv("API_TOKEN")
   headers = {"Accept": "application/json",
             "Authorization": api_key}
-
   response = requests.get(url, headers=headers)
   return response
 
@@ -89,19 +91,42 @@ test_tracking_data = [
     {"tracking_number": "ZX34297652"},
 ]
 
+def process_package(package):
+  response = find_package_details(package["tracking_number"])
+  payable_weight = find_payable_weight(response)
+  return payable_weight
+
 # button to run payable weights function 
-if st.button("calculate payable weights from db results (test)"):
+if st.button("calculate payable weights from db results"):
   # for x in st.session_state.tracking_numbers:
   weights = []
   processed_num = 0
   counter_placeholder = st.empty()
 
-  for package in test_tracking_data:
-    processed_num += 1
-    response = find_package_details(package["tracking_number"])
-    payable_weight = find_payable_weight(response)
-    counter_placeholder.write(f"Processed: {processed_num}")
-    weights.append(payable_weight)
+  # Use ThreadPoolExecutor to run multiple API calls in parallel
+  with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+    # map returns results in the same order as input
+    for i, result in enumerate(executor.map(process_package, st.session_state.tracking_numbers), start=1):
+      weights.append(result)
+      counter_placeholder.write(f"Processed: {i}")
+  
   weights_df = pd.DataFrame(weights, columns=["weights"])
-  st.write(weights_df)
-    
+
+  # sort each weight into a category, then aggregate the categories 
+  weights_df["range"] = pd.cut(
+    weights_df["weights"],
+    bins=[0, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150],
+    labels=["0-30", "30-40", "40-50", "50-60", "60-70", "70-80", "80-90", "90-100", "100-110", "110-120", "120-130", "130-140", "140-150"]
+  )
+  counts = weights_df["range"].value_counts()
+  counts = counts.sort_index()
+
+  # plot pie chart
+  fig, ax = pyplot.subplots()
+  counts.plot.pie(ax=ax, 
+                  autopct=lambda pct: f'{pct:.1f}%' if pct > 2 else '', 
+                  pctdistance=0.8,
+                  labeldistance=1.1)
+  ax.set_title("Weights")
+
+  st.pyplot(fig)
