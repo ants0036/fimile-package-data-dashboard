@@ -1,77 +1,29 @@
-import pymysql
 import streamlit as st
-from dotenv import load_dotenv
-import os 
-import requests 
-from datetime import datetime, time
 import pandas as pd
 from matplotlib import pyplot
 import concurrent.futures
 
+from db import fetch_tracking_numbers
+from api import find_package_details
+
 # start and end date picker
 start_date = st.date_input("pick start date")
 end_date = st.date_input("pick end date")
-st.write("start date:", start_date, "end date:", end_date)
-
-# cache so it doesn't rerun every time a widget changes
-# given a start date and end date, fetch all tracking numbers within that date from the db 
-@st.cache_data
-def fetch_tracking_numbers():
-  # connect to the SQL database with the enviroment variables 
-  conn = pymysql.connect(
-    host=str(st.secrets.MYSQL_HOST),
-    port=int(st.secrets.MYSQL_PORT),
-    user=str(st.secrets.MYSQL_USERNAME),
-    password=str(st.secrets.MYSQL_PASSWORD),
-    database=str(st.secrets.MYSQL_DATABASE),
-    charset="utf8mb4",
-    cursorclass=pymysql.cursors.DictCursor,
-    autocommit=True,
-  )
-  rows = []
-  try:
-    # instead of cur = conn.cursor() because with automatically closes
-    with conn.cursor() as cur:
-      sql = """
-          SELECT DISTINCT tracking_number
-          FROM waybill_waybills
-          WHERE created_at >= %s AND created_at < %s
-          AND tracking_number IS NOT NULL AND tracking_number <> ''
-          ORDER BY tracking_number ASC
-      """
-      # convert to datetime object 
-      start_dt = datetime.combine(start_date, time.min)
-      end_dt   = datetime.combine(end_date, time.max)
-      cur.execute(sql, (start_dt, end_dt))
-    # could use fetchmany but lazy? not enough rows to do so?
-    rows = cur.fetchall()
-  finally:
-      conn.close()
-  return rows 
+st.write("start date:", start_date, "end date:", end_date) 
 
 # button to fetch from db & write the response 
 # use session state so it doesn't rerun 
 if st.button("fetch from db"):
-   st.session_state.tracking_numbers = fetch_tracking_numbers()
+   st.session_state.tracking_numbers = fetch_tracking_numbers(start_date, end_date)
 if "tracking_numbers" in st.session_state:
     st.write(st.session_state.tracking_numbers)
-
-# given a singular tracking number, fetch the details of the package from the beans api 
-# idk if i should cache this since it's unlikely this will be repeated again but it's worth a shot?
-@st.cache_data
-def find_package_details (tracking_number):
-  API_URL_TEMPLATE = "https://isp.beans.ai/enterprise/v1/lists/status_logs?tracking_id={tracking_id}&readable=true&include_item=true"
-  url = API_URL_TEMPLATE.format(tracking_id=tracking_number)
-  api_key = st.secrets.API_TOKEN
-  headers = {"Accept": "application/json",
-            "Authorization": api_key}
-  response = requests.get(url, headers=headers)
-  return response
 
 # given an api response, find the payable weight of the item 
 def find_payable_weight(response):
   response_data = response.json() 
   logs = response_data.get("listItemReadableStatusLogs")
+  if logs is None:
+    return 0
   dims = logs[0]["item"]["dimensions"]["dims"]
   volume = dims[3]["v"]
   weight = dims[2]["v"]
@@ -89,10 +41,12 @@ test_tracking_data = [
     {"tracking_number": "ZX34297652"},
 ]
 
-def process_package(package):
+# returns an array of data taken from the package to be added to the dataframe. 
+def process_package(package, area_zip_df):
   response = find_package_details(package["tracking_number"])
   payable_weight = find_payable_weight(response)
-  return payable_weight
+  zipcode = find_delivery_zone(response, area_zip_df)
+  return [payable_weight, zipcode]
 
 def aggregate_weights(weights_df):
   # sort each weight into a category, then aggregate the categories 
@@ -112,37 +66,54 @@ def plot_weight_chart(counts):
   ax.set_title("Weights")
   st.pyplot(fig)
 
+def plot_area_chart(areas):
+  fig, ax = pyplot.subplots()
+  areas.plot.pie(ax=ax, 
+                  autopct=lambda pct: f"{int(round(pct * areas.sum() / 100))} ({pct:.1f}%)" if pct > 2 else "")
+  ax.set_title("Areas")
+  st.pyplot(fig)
+
+@st.cache_data
+def load_area_zips():
+  return pd.read_csv("data/zip-to-area.csv", dtype={"zipcode": str})
+
+def find_delivery_zone(response, area_zip_df):
+  response_data = response.json() 
+  logs = response_data.get("listItemReadableStatusLogs")
+  if logs is None:
+    return "None"
+  package_zip = logs[len(logs)-1]["item"]["addressComponents"]["zipcode"]
+  area = area_zip_df.loc[area_zip_df["zipcode"] == str(package_zip), ["area"]]
+  if area.empty:
+    return "None"
+  else: 
+    return area.iloc[0]["area"]
+
+def run_weight_area_calculations(tracking_numbers):
+  weights = []
+  processed_num = 0
+  counter_placeholder = st.empty()
+
+  delivery_areas = []
+  area_zip_df = load_area_zips()
+
+  # Use ThreadPoolExecutor to run multiple API calls in parallel
+  with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+    # map returns results in the same order as input
+    for package, result in enumerate(executor.map(lambda pkg: process_package(pkg, area_zip_df), tracking_numbers), start=1):
+      weights.append(result[0])
+      delivery_areas.append(result[1])
+      counter_placeholder.write(f"Processed: {package}")
+
+  weights_df = pd.DataFrame(weights, columns=["weights"])
+  counts = aggregate_weights(weights_df)
+  plot_weight_chart(counts)
+  areas_df = pd.DataFrame(delivery_areas, columns=["areas"])
+  areas = areas_df["areas"].value_counts()
+  plot_area_chart(areas)
+
 # button to run payable weights function 
-if st.button("calculate payable weights from db results"):
-  # for x in st.session_state.tracking_numbers:
-  weights = []
-  processed_num = 0
-  counter_placeholder = st.empty()
-
-  # Use ThreadPoolExecutor to run multiple API calls in parallel
-  with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-    # map returns results in the same order as input
-    for i, result in enumerate(executor.map(process_package, st.session_state.tracking_numbers), start=1):
-      weights.append(result)
-      counter_placeholder.write(f"Processed: {i}")
-  
-  weights_df = pd.DataFrame(weights, columns=["weights"])
-  counts = aggregate_weights(weights_df)
-  plot_weight_chart(counts)
-
+if st.button("calculate payable weights from db results (click db button first)"):
+  run_weight_area_calculations(st.session_state.tracking_numbers)
 if st.button("use test data to calculate"):
-  # for x in st.session_state.tracking_numbers:
-  weights = []
-  processed_num = 0
-  counter_placeholder = st.empty()
-
-  # Use ThreadPoolExecutor to run multiple API calls in parallel
-  with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-    # map returns results in the same order as input
-    for i, result in enumerate(executor.map(process_package, test_tracking_data), start=1):
-      weights.append(result)
-      counter_placeholder.write(f"Processed: {i}")
-
-  weights_df = pd.DataFrame(weights, columns=["weights"])
-  counts = aggregate_weights(weights_df)
-  plot_weight_chart(counts)
+  run_weight_area_calculations(test_tracking_data)
