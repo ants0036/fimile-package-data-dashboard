@@ -1,0 +1,6 @@
+streamlit
+pymysql
+python-dotenv
+requests
+pandas
+matplotlib

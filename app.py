@@ -18,13 +18,12 @@ st.write("start date:", start_date, "end date:", end_date)
 @st.cache_data
 def fetch_tracking_numbers():
   # connect to the SQL database with the enviroment variables 
-  load_dotenv()
   conn = pymysql.connect(
-    host=str(os.getenv("MYSQL_HOST")),
-    port=int(os.getenv("MYSQL_PORT")),
-    user=str(os.getenv("MYSQL_USERNAME")),
-    password=str(os.getenv("MYSQL_PASSWORD")),
-    database=str(os.getenv("MYSQL_DATABASE")),
+    host=str(st.secrets.MYSQL_HOST),
+    port=int(st.secrets.MYSQL_PORT),
+    user=str(st.secrets.MYSQL_USERNAME),
+    password=str(st.secrets.MYSQL_PASSWORD),
+    database=str(st.secrets.MYSQL_DATABASE),
     charset="utf8mb4",
     cursorclass=pymysql.cursors.DictCursor,
     autocommit=True,
@@ -61,10 +60,9 @@ if "tracking_numbers" in st.session_state:
 # idk if i should cache this since it's unlikely this will be repeated again but it's worth a shot?
 @st.cache_data
 def find_package_details (tracking_number):
-  load_dotenv()
   API_URL_TEMPLATE = "https://isp.beans.ai/enterprise/v1/lists/status_logs?tracking_id={tracking_id}&readable=true&include_item=true"
   url = API_URL_TEMPLATE.format(tracking_id=tracking_number)
-  api_key = os.getenv("API_TOKEN")
+  api_key = st.secrets.API_TOKEN
   headers = {"Accept": "application/json",
             "Authorization": api_key}
   response = requests.get(url, headers=headers)
