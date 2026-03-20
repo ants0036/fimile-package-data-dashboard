@@ -1,9 +1,7 @@
 import pandas as pd
 
 # using the zone csv, find the zone the package is from 
-def find_delivery_zone(response, area_zip_df):
-  response_data = response.json() 
-  logs = response_data.get("listItemReadableStatusLogs")
+def find_delivery_zone(logs, area_zip_df):
   if logs is None:
     return "None"
   package_zip = logs[len(logs)-1]["item"]["addressComponents"]["zipcode"]
@@ -25,12 +23,17 @@ def aggregate_weights(weights_df):
   return counts
 
 # given an api response, find the payable weight of the item 
-def find_payable_weight(response):
-  response_data = response.json() 
-  logs = response_data.get("listItemReadableStatusLogs")
+def find_payable_weight(logs):
   if logs is None:
     return 0
   dims = logs[0]["item"]["dimensions"]["dims"]
   volume = dims[3]["v"]
   weight = dims[2]["v"]
   return max((int(volume)/250), int(weight))
+
+# using the zone csv, find the zone the package is from 
+def find_pickup_address(logs):
+  if logs is None:
+    return "None"
+  pickup_address = logs[0]["item"]["formattedAddress"]
+  return pickup_address
