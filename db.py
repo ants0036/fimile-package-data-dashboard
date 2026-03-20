@@ -22,7 +22,7 @@ def fetch_tracking_numbers(start_date, end_date):
     # instead of cur = conn.cursor() because with automatically closes
     with conn.cursor() as cur:
       sql = """
-          SELECT DISTINCT tracking_number
+          SELECT DISTINCT tracking_number, created_at
           FROM waybill_waybills
           WHERE created_at >= %s AND created_at < %s
           AND tracking_number IS NOT NULL AND tracking_number <> ''

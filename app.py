@@ -1,11 +1,10 @@
 import streamlit as st
 import pandas as pd
-from matplotlib import pyplot
 import concurrent.futures
 
 from db import fetch_tracking_numbers
-from response_parsing import find_delivery_zone
-from api import find_package_details, aggregate_weights, find_payable_weight
+from response_parsing import find_delivery_zone, aggregate_weights, find_payable_weight
+from api import find_package_details
 from plot import plot_weight_chart, plot_area_chart
 
 # start and end date picker
@@ -37,6 +36,11 @@ def process_package(package, area_zip_df):
   response = find_package_details(package["tracking_number"])
   payable_weight = find_payable_weight(response)
   zipcode = find_delivery_zone(response, area_zip_df)
+
+  response_data = response.json() 
+  logs = response_data.get("listItemReadableStatusLogs")
+  package_customer = logs[len(logs)-1]["item"]["customerName"]
+  print(package_customer)
   return [payable_weight, zipcode]
 
 @st.cache_data
