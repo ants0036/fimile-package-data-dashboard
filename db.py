@@ -37,3 +37,31 @@ def fetch_tracking_numbers(start_date, end_date):
   finally:
       conn.close()
   return rows 
+
+# optimize this later... 
+def fetch_router_message(tracking_number):
+  # connect to the SQL database with the enviroment variables 
+  conn = pymysql.connect(
+    host=str(st.secrets.MYSQL_HOST),
+    port=int(st.secrets.MYSQL_PORT),
+    user=str(st.secrets.MYSQL_USERNAME),
+    password=str(st.secrets.MYSQL_PASSWORD),
+    database=str(st.secrets.MYSQL_DATABASE),
+    charset="utf8mb4",
+    cursorclass=pymysql.cursors.DictCursor,
+    autocommit=True,
+  )
+  rows = []
+  try:
+    # instead of cur = conn.cursor() because with automatically closes
+    with conn.cursor() as cur:
+      sql = """
+          SELECT router_messages
+          FROM transit_third_party_caches
+          WHERE tracking_number = %s
+      """
+      cur.execute(sql, tracking_number)
+    rows = cur.fetchall()
+  finally:
+      conn.close()
+  return rows 
